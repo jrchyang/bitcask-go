@@ -58,6 +58,11 @@ func Open(options Options) (*DB, error) {
 	return db, nil
 }
 
+// 关闭数据库
+func (db *DB) Close() error {
+	return nil
+}
+
 // 写入 kv 数据，key 不能为空
 func (db *DB) Put(key []byte, value []byte) error {
 	// 判断 key 是否有效
