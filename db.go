@@ -60,7 +60,36 @@ func Open(options Options) (*DB, error) {
 
 // 关闭数据库
 func (db *DB) Close() error {
+	if db.activeFile == nil {
+		return nil
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// 关闭当前活跃文件
+	if err := db.activeFile.Close(); err != nil {
+		return err
+	}
+
+	// 关闭旧的数据文件
+	for _, file := range db.olderFiles {
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func (db *DB) Sync() error {
+	if db.activeFile == nil {
+		return nil
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.activeFile.Sync()
 }
 
 // 写入 kv 数据，key 不能为空
@@ -105,30 +134,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
-	// 先根据文件 id 找到数据文件
-	var dataFile *data.DataFile
-	if db.activeFile.FileId == logRecordPos.Fid {
-		dataFile = db.activeFile
-	} else {
-		dataFile = db.olderFiles[logRecordPos.Fid]
-	}
-
-	// 数据文件不存在
-	if dataFile == nil {
-		return nil, ErrDataFileNotFound
-	}
-
-	// 根据偏移读取对应的数据
-	logRecord, _, err := dataFile.ReadLogRecord(logRecordPos.Offset)
-	if err != nil {
-		return nil, err
-	}
-
-	if logRecord.Type == data.LogRecordDeleted {
-		return nil, ErrKeyNotFound
-	}
-
-	return logRecord.Value, nil
+	return db.getValueByPosition(logRecordPos)
 }
 
 // 根据 key 删除对应的数据
@@ -158,6 +164,66 @@ func (db *DB) Delete(key []byte) error {
 	}
 
 	return nil
+}
+
+// 获取数据库中所有的 key
+func (db *DB) ListKeys() [][]byte {
+	it := db.index.Iterator(false)
+	keys := make([][]byte, db.index.Size())
+	var idx int
+	for it.Rewind(); it.Valid(); it.Next() {
+		keys[idx] = it.Key()
+		idx++
+	}
+	return keys
+}
+
+// 遍历所有数据，执行指定的操作
+func (db *DB) Fold(fn func(key, value []byte) bool) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	it := db.index.Iterator(false)
+	for it.Rewind(); it.Valid(); it.Next() {
+		val, err := db.getValueByPosition(it.Value())
+		if err != nil {
+			return err
+		}
+
+		if !fn(it.Key(), val) {
+			break
+		}
+	}
+
+	return nil
+}
+
+// 根据索引位置信息获取对应的 value
+func (db *DB) getValueByPosition(logRecordPos *data.LogRecordPos) ([]byte, error) {
+	// 先根据文件 id 找到数据文件
+	var dataFile *data.DataFile
+	if db.activeFile.FileId == logRecordPos.Fid {
+		dataFile = db.activeFile
+	} else {
+		dataFile = db.olderFiles[logRecordPos.Fid]
+	}
+
+	// 数据文件不存在
+	if dataFile == nil {
+		return nil, ErrDataFileNotFound
+	}
+
+	// 根据偏移读取对应的数据
+	logRecord, _, err := dataFile.ReadLogRecord(logRecordPos.Offset)
+	if err != nil {
+		return nil, err
+	}
+
+	if logRecord.Type == data.LogRecordDeleted {
+		return nil, ErrKeyNotFound
+	}
+
+	return logRecord.Value, nil
 }
 
 // 追加写数据到活跃文件中

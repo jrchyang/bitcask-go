@@ -1,6 +1,7 @@
 package bitcaskgo
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -127,6 +128,7 @@ func TestDB_Get(t *testing.T) {
 	err = db.Put(utils.GetTestKey(22), utils.RandomValue(24))
 	assert.Nil(t, err)
 	err = db.Put(utils.GetTestKey(22), utils.RandomValue(24))
+	assert.Nil(t, err)
 	val3, err := db.Get(utils.GetTestKey(22))
 	assert.Nil(t, err)
 	assert.NotNil(t, val3)
@@ -162,6 +164,7 @@ func TestDB_Get(t *testing.T) {
 
 	// 重启数据库
 	db2, err := Open(opts)
+	assert.Nil(t, err)
 	defer destroyDB(db2)
 	val6, err := db2.Get(utils.GetTestKey(11))
 	assert.Nil(t, err)
@@ -228,6 +231,7 @@ func TestDB_Delete(t *testing.T) {
 
 	// 重启数据库
 	db2, err := Open(opts)
+	assert.Nil(t, err)
 	defer destroyDB(db2)
 	_, err = db2.Get(utils.GetTestKey(11))
 	assert.Equal(t, ErrKeyNotFound, err)
@@ -235,4 +239,69 @@ func TestDB_Delete(t *testing.T) {
 	val2, err := db2.Get(utils.GetTestKey(22))
 	assert.Nil(t, err)
 	assert.Equal(t, val1, val2)
+}
+
+func TestDB_Listkeys(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	// 数据库为空
+	keys := db.ListKeys()
+	assert.Equal(t, 0, len(keys))
+
+	// 只有一条数据
+	err = db.Put(utils.GetTestKey(10), utils.RandomValue(10))
+	assert.Nil(t, err)
+	keys2 := db.ListKeys()
+	assert.Equal(t, 1, len(keys2))
+
+	// 多条数据
+	err = db.Put(utils.GetTestKey(20), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(30), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(50), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(40), utils.RandomValue(10))
+	assert.Nil(t, err)
+	keys3 := db.ListKeys()
+	for _, key := range keys3 {
+		t.Log(string(key))
+	}
+}
+
+func TestDB_Fold(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	err = db.Put(utils.GetTestKey(10), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(20), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(30), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(50), utils.RandomValue(10))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(40), utils.RandomValue(10))
+	assert.Nil(t, err)
+
+	db.Fold(func(key, value []byte) bool {
+		t.Log(string(key))
+		t.Log(string(value))
+		if bytes.Equal(utils.GetTestKey(30), key) {
+			return false
+		} else {
+			return true
+		}
+	})
 }
